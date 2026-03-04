@@ -35,25 +35,23 @@ jobs:
           cargo generate-lockfile
           echo "Cargo.toml version set to $VER"
 
-      # Build the Docker image with both latest and version tags
-      - name: Build Docker image
-        run: |
-          VER="${{ steps.version.outputs.ver }}"
-          docker build \
-            -t "$IMAGE:latest" \
-            -t "$IMAGE:$VER" \
-            .
-      # Login to the Gitea container registry using the provided token
-      - name: Login to registry
-        run: |
-          echo "${{ gitea.token }}" | docker login gitea.bearly.local -u "${{ gitea.actor }}" --password-stdin
+      # Login to the Gitea container registry
+      - name: Login to Gitea Registry
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.bearly.local
+          username: ${{ gitea.actor }}
+          password: ${{ secrets.GITEA_TOKEN }}
 
-      # Push both tags to the Gitea container registry
-      - name: Push to registry
-        run: |
-          VER="${{ steps.version.outputs.ver }}"
-          docker push "$IMAGE:latest"
-          docker push "$IMAGE:$VER"
+      # Build and push both latest and version tags
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.version.outputs.ver }}
 
       # Commit the updated Cargo.toml and Cargo.lock back to master
       - name: Push version bump to master
