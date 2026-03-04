@@ -1,0 +1,68 @@
+name: Build and Push
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  IMAGE: gitea.bearly.local/BearlyProjects/gitea-autoscaler
+
+jobs:
+  release:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Extract semver from the tag (v0.1.0 -> 0.1.0)
+      - name: Resolve version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ gitea.ref_name }}}"
+          VER="${TAG#v}"
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "ver=$VER"   >> "$GITHUB_OUTPUT"
+          echo "Version: $VER (tag: $TAG)"
+
+      # Bump version in Cargo.toml + regenerate lock file
+      - name: Update Cargo version
+        run: |
+          VER="${{ steps.version.outputs.ver }}"
+          sed -i "s/^version = \".*\"/version = \"${VER}\"/" Cargo.toml
+          # Regenerate lock file so it matches the new version
+          cargo generate-lockfile
+          echo "Cargo.toml version set to $VER"
+
+      # Build the Docker image with both latest and version tags
+      - name: Build Docker image
+        run: |
+          VER="${{ steps.version.outputs.ver }}"
+          docker build \
+            -t "$IMAGE:latest" \
+            -t "$IMAGE:$VER" \
+            .
+
+      # Push both tags to the Gitea container registry
+      - name: Push to registry
+        run: |
+          VER="${{ steps.version.outputs.ver }}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$VER"
+
+      # Commit the updated Cargo.toml and Cargo.lock back to master
+      - name: Push version bump to master
+        run: |
+          VER="${{ steps.version.outputs.ver }}"
+          git config user.name  "Gitea Actions"
+          git config user.email "actions@bearly.local"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump version to $VER [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:master
+
+      # Rolling restart so the cluster picks up the new image
+      - name: Restart deployment
+        run: |
+          kubectl -n gitea rollout restart deployment/runner-autoscaler
+          kubectl -n gitea rollout status deployment/runner-autoscaler --timeout=120s
