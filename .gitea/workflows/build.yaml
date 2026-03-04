@@ -61,7 +61,7 @@ jobs:
           git config user.email "actions@bearly.local"
           git add Cargo.toml Cargo.lock
           git commit -m "chore: bump version to $VER [skip ci]" || echo "No changes to commit"
-          git push origin HEAD:master
+          git push origin HEAD:refs/heads/master
 
       # Rolling restart so the cluster picks up the new image
       - name: Restart deployment
