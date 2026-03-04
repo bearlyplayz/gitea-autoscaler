@@ -43,6 +43,10 @@ jobs:
             -t "$IMAGE:latest" \
             -t "$IMAGE:$VER" \
             .
+      # Login to the Gitea container registry using the provided token
+      - name: Login to registry
+        run: |
+          echo "${{ gitea.token }}" | docker login gitea.bearly.local -u "${{ gitea.actor }}" --password-stdin
 
       # Push both tags to the Gitea container registry
       - name: Push to registry
