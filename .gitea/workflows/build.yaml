@@ -41,7 +41,7 @@ jobs:
         with:
           registry: gitea.bearly.local
           username: ${{ gitea.actor }}
-          password: ${{ secrets.GITEA_TOKEN }}
+          password: ${{ secrets.DEPLOY_REPO_TOKEN }}
 
       # Build and push both latest and version tags
       - name: Build and Push
