@@ -7,6 +7,7 @@ on:
 
 env:
   IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler
+  IMAGE_CACHE: gitea.bearly.local/bearlyprojects/gitea-autoscaler:buildcache
 
 jobs:
   release:
@@ -43,6 +44,11 @@ jobs:
           username: ${{ gitea.actor }}
           password: ${{ secrets.DEPLOY_REPO_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
       # Build and push both latest and version tags
       - name: Build and Push
         uses: docker/build-push-action@v6
@@ -52,6 +58,8 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.version.outputs.ver }}
+          cache-from: type=registry,ref=${{ env.IMAGE_CACHE }}
+          cache-to: type=registry,ref=${{ env.IMAGE_CACHE }},mode=max
 
       # Commit the updated Cargo.toml and Cargo.lock back to master
       - name: Push version bump to master
@@ -66,5 +74,5 @@ jobs:
       # Rolling restart so the cluster picks up the new image
       - name: Restart deployment
         run: |
-          kubectl -n gitea rollout restart deployment/runner-autoscaler
-          kubectl -n gitea rollout status deployment/runner-autoscaler --timeout=120s
+          kubectl -n gitea rollout restart deployment/gitea-autoscaler
+          kubectl -n gitea rollout status deployment/gitea-autoscaler --timeout=120s

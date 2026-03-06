@@ -88,17 +88,22 @@ impl GiteaClient {
         })
     }
 
-    /// Fetch all queued and in-progress jobs from the admin API.
+    /// Fetch queued jobs and live in-progress jobs from the admin API.
     ///
-    /// Returns `(total_job_count, set_of_busy_runner_pod_names)`.
+    /// Returns `(queued_job_count, set_of_busy_live_runner_pod_names)`.
     ///
-    /// `total_count` from the API already represents all queued + in-progress
-    /// jobs, so we only iterate pages to collect `runner_name` from in-progress
-    /// jobs (needed for safe scale-down). Once `busy_runners >= max_replicas`
-    /// we bail early — at max capacity there is nothing to scale.
-    pub async fn get_jobs(&self, max_replicas: u32) -> Result<(u32, HashSet<String>)> {
+    /// In-progress jobs whose `runner_name` is not present in Kubernetes are
+    /// treated as stale and ignored for scaling decisions. This makes the
+    /// autoscaler resilient to jobs Gitea still shows as running after a runner
+    /// has already disappeared.
+    pub async fn get_jobs(
+        &self,
+        max_replicas: u32,
+        live_runner_names: &HashSet<String>,
+    ) -> Result<(u32, HashSet<String>)> {
         let mut busy_runners = HashSet::new();
-        let mut total_count: u32;
+        let mut queued = 0u32;
+        let mut stale_in_progress = 0u32;
         let mut page: u32 = 1;
         let limit: u32 = 50;
 
@@ -126,19 +131,31 @@ impl GiteaClient {
                 .await
                 .context("failed to deserialize Gitea jobs response")?;
 
-            // total_count covers all queued + in_progress jobs across all pages.
-            total_count = data.total_count as u32;
+            let page_total = data.total_count as u32;
 
-            // We only need to iterate to collect busy runner names.
             for job in &data.jobs {
-                if job.status == "in_progress" && !job.runner_name.is_empty() {
-                    busy_runners.insert(job.runner_name.clone());
-                    debug!(
-                        job_id = job.id,
-                        name = %job.name,
-                        runner = %job.runner_name,
-                        "in-progress job"
-                    );
+                match job.status.as_str() {
+                    "queued" => queued += 1,
+                    "in_progress" if !job.runner_name.is_empty() => {
+                        if live_runner_names.contains(&job.runner_name) {
+                            busy_runners.insert(job.runner_name.clone());
+                            debug!(
+                                job_id = job.id,
+                                name = %job.name,
+                                runner = %job.runner_name,
+                                "in-progress job on live runner"
+                            );
+                        } else {
+                            stale_in_progress += 1;
+                            debug!(
+                                job_id = job.id,
+                                name = %job.name,
+                                runner = %job.runner_name,
+                                "ignoring in-progress job on non-live runner"
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -154,20 +171,25 @@ impl GiteaClient {
 
             // Check if we've fetched everything.
             let fetched = (page - 1) * limit + data.jobs.len() as u32;
-            if fetched >= total_count || data.jobs.is_empty() {
+            if fetched >= page_total || data.jobs.is_empty() {
                 break;
             }
             page += 1;
         }
 
-        // queued = total jobs minus the ones that are actively running.
-        let queued = total_count.saturating_sub(busy_runners.len() as u32);
         debug!(
-            total_count,
             queued,
             busy = busy_runners.len(),
+            stale_in_progress,
             "job summary"
         );
+
+        if stale_in_progress > 0 {
+            info!(
+                stale_in_progress,
+                "ignored stale in-progress jobs on non-live runners"
+            );
+        }
 
         Ok((queued, busy_runners))
     }
@@ -250,8 +272,17 @@ fn select_stale_offline_runners<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Runner, select_stale_offline_runners};
+    use super::{Job, Runner, select_stale_offline_runners, summarize_jobs};
     use std::collections::HashSet;
+
+    fn job(id: u64, status: &str, runner_name: &str) -> Job {
+        Job {
+            id,
+            status: status.to_string(),
+            runner_name: runner_name.to_string(),
+            name: format!("job-{id}"),
+        }
+    }
 
     fn runner(id: u64, name: &str, status: &str, busy: bool) -> Runner {
         Runner {
@@ -301,4 +332,61 @@ mod tests {
 
         assert_eq!(selected, vec![&runners[0]]);
     }
+
+    #[test]
+    fn summarize_jobs_ignores_in_progress_jobs_on_non_live_runners() {
+        let live_runner_names = HashSet::from(["runner-live".to_string()]);
+        let jobs = vec![
+            job(1, "queued", ""),
+            job(2, "in_progress", "runner-live"),
+            job(3, "in_progress", "runner-gone"),
+        ];
+
+        let (queued, busy_runners, stale_in_progress) = summarize_jobs(&jobs, &live_runner_names);
+
+        assert_eq!(queued, 1);
+        assert_eq!(busy_runners, HashSet::from(["runner-live".to_string()]));
+        assert_eq!(stale_in_progress, 1);
+    }
+
+    #[test]
+    fn summarize_jobs_counts_only_queued_jobs_as_queued() {
+        let live_runner_names = HashSet::new();
+        let jobs = vec![
+            job(1, "queued", ""),
+            job(2, "queued", ""),
+            job(3, "completed", "runner-live"),
+        ];
+
+        let (queued, busy_runners, stale_in_progress) = summarize_jobs(&jobs, &live_runner_names);
+
+        assert_eq!(queued, 2);
+        assert!(busy_runners.is_empty());
+        assert_eq!(stale_in_progress, 0);
+    }
+}
+
+fn summarize_jobs(
+    jobs: &[Job],
+    live_runner_names: &HashSet<String>,
+) -> (u32, HashSet<String>, u32) {
+    let mut queued = 0u32;
+    let mut busy_runners = HashSet::new();
+    let mut stale_in_progress = 0u32;
+
+    for job in jobs {
+        match job.status.as_str() {
+            "queued" => queued += 1,
+            "in_progress" if !job.runner_name.is_empty() => {
+                if live_runner_names.contains(&job.runner_name) {
+                    busy_runners.insert(job.runner_name.clone());
+                } else {
+                    stale_in_progress += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (queued, busy_runners, stale_in_progress)
 }
