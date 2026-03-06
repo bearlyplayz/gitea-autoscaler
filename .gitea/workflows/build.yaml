@@ -6,14 +6,14 @@ on:
       - "v*"
 
 env:
-  IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler
-  IMAGE_CACHE: gitea.bearly.local/bearlyprojects/gitea-autoscaler:buildcache
+  IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler/autoscaler
+  IMAGE_CACHE: gitea.bearly.local/bearlyprojects/gitea-autoscaler/autoscaler:buildcache
 
 jobs:
   release:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -51,7 +51,7 @@ jobs:
 
       # Build and push both latest and version tags
       - name: Build and Push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
