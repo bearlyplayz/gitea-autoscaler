@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use tokio::time::{Duration, sleep};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use config::Config;
 use gitea::GiteaClient;
@@ -85,6 +85,20 @@ async fn tick(
         }
     } else {
         info!(replicas = current, running, queued, "ok");
+    }
+
+    match k8s.list_live_runner_pod_names().await {
+        Ok(live_runner_names) => match gitea
+            .cleanup_offline_runners(&live_runner_names, &busy_runners)
+            .await
+        {
+            Ok(deleted) if deleted > 0 => {
+                info!(deleted, "removed stale offline runner registrations")
+            }
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "offline runner cleanup failed"),
+        },
+        Err(e) => warn!(error = %e, "failed to list live runner pods for cleanup"),
     }
 
     Ok(())

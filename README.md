@@ -21,6 +21,7 @@ A lightweight Rust controller that automatically scales Gitea Actions runner pod
 2. **Decide** — Computes `desired = clamp(queued + running, min, max)`.
 3. **Scale up** — Immediately patches the Deployment replica count.
 4. **Scale down** — Waits for a configurable cooldown period, then deletes only *idle* pods (never kills a pod running a job).
+5. **Cleanup** — Deletes stale Gitea runner registrations when a runner is offline in Gitea and no matching runner pod still exists in Kubernetes.
 
 ## Configuration
 
@@ -70,6 +71,6 @@ docker push gitea.bearly.local/bearlyprojects/gitea-autoscaler:latest
 src/
 ├── main.rs     # Entry point, control loop (poll → decide → scale)
 ├── config.rs   # Environment variable parsing + validation
-├── gitea.rs    # Gitea admin API client (job queue queries)
+├── gitea.rs    # Gitea admin API client (job queue queries + stale runner cleanup)
 └── scaler.rs   # Kubernetes Deployment scaling + safe pod deletion
 ``` 

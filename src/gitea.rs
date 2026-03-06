@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::config::{Config, GiteaAuth};
 
@@ -27,6 +27,24 @@ pub struct Job {
     pub runner_name: String,
     #[serde(default)]
     pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct Runner {
+    #[serde(default)]
+    pub busy: bool,
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunnersResponse {
+    #[serde(default)]
+    pub runners: Vec<Runner>,
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
@@ -152,5 +170,135 @@ impl GiteaClient {
         );
 
         Ok((queued, busy_runners))
+    }
+
+    pub async fn cleanup_offline_runners(
+        &self,
+        live_runner_names: &HashSet<String>,
+        busy_runners: &HashSet<String>,
+    ) -> Result<u32> {
+        let runners = self.list_runners().await?;
+        let stale_runner_ids =
+            select_stale_offline_runners(&runners, live_runner_names, busy_runners);
+        let stale_count = stale_runner_ids.len() as u32;
+
+        for runner in stale_runner_ids {
+            info!(runner_id = runner.id, runner = %runner.name, "deleting stale offline runner");
+            self.delete_runner(runner.id).await?;
+        }
+
+        Ok(stale_count)
+    }
+
+    async fn list_runners(&self) -> Result<Vec<Runner>> {
+        let url = format!("{}/api/v1/admin/actions/runners", self.base_url);
+
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("failed to reach Gitea runners API")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Gitea runners API returned {status}: {body}");
+        }
+
+        let data: RunnersResponse = resp
+            .json()
+            .await
+            .context("failed to deserialize Gitea runners response")?;
+
+        Ok(data.runners)
+    }
+
+    async fn delete_runner(&self, runner_id: u64) -> Result<()> {
+        let url = format!("{}/api/v1/admin/actions/runners/{runner_id}", self.base_url);
+
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .await
+            .context("failed to reach Gitea delete runner API")?;
+
+        if resp.status() != reqwest::StatusCode::NO_CONTENT {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Gitea delete runner API returned {status}: {body}");
+        }
+
+        Ok(())
+    }
+}
+
+fn select_stale_offline_runners<'a>(
+    runners: &'a [Runner],
+    live_runner_names: &HashSet<String>,
+    busy_runners: &HashSet<String>,
+) -> Vec<&'a Runner> {
+    runners
+        .iter()
+        .filter(|runner| runner.status.eq_ignore_ascii_case("offline"))
+        .filter(|runner| !runner.busy)
+        .filter(|runner| !live_runner_names.contains(&runner.name))
+        .filter(|runner| !busy_runners.contains(&runner.name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Runner, select_stale_offline_runners};
+    use std::collections::HashSet;
+
+    fn runner(id: u64, name: &str, status: &str, busy: bool) -> Runner {
+        Runner {
+            busy,
+            id,
+            name: name.to_string(),
+            status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn selects_offline_runners_missing_from_cluster() {
+        let live_runner_names = HashSet::from(["runner-live".to_string()]);
+        let busy_runners = HashSet::new();
+        let runners = vec![
+            runner(1, "runner-live", "offline", false),
+            runner(2, "runner-stale", "offline", false),
+        ];
+
+        let selected = select_stale_offline_runners(&runners, &live_runner_names, &busy_runners);
+
+        assert_eq!(selected, vec![&runners[1]]);
+    }
+
+    #[test]
+    fn skips_online_and_busy_runners() {
+        let live_runner_names = HashSet::new();
+        let busy_runners = HashSet::from(["runner-busy".to_string(), "runner-job".to_string()]);
+        let runners = vec![
+            runner(1, "runner-online", "online", false),
+            runner(2, "runner-busy", "offline", true),
+            runner(3, "runner-job", "offline", false),
+        ];
+
+        let selected = select_stale_offline_runners(&runners, &live_runner_names, &busy_runners);
+
+        assert_eq!(selected, Vec::<&Runner>::new());
+    }
+
+    #[test]
+    fn matches_offline_status_case_insensitively() {
+        let live_runner_names = HashSet::new();
+        let busy_runners = HashSet::new();
+        let runners = vec![runner(9, "runner-stale", "OffLine", false)];
+
+        let selected = select_stale_offline_runners(&runners, &live_runner_names, &busy_runners);
+
+        assert_eq!(selected, vec![&runners[0]]);
     }
 }

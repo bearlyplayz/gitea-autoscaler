@@ -80,6 +80,33 @@ impl Scaler {
         Ok(names)
     }
 
+    /// List live pod names for the runner Deployment.
+    pub async fn list_live_runner_pod_names(&self) -> Result<HashSet<String>> {
+        let lp = ListParams::default().labels(&format!("app={}", self.deployment_name));
+
+        let pod_list = self
+            .pods
+            .list(&lp)
+            .await
+            .context("failed to list live runner pods")?;
+
+        let names = pod_list
+            .items
+            .into_iter()
+            .filter(|pod| {
+                !matches!(
+                    pod.status
+                        .as_ref()
+                        .and_then(|status| status.phase.as_deref()),
+                    Some("Succeeded") | Some("Failed")
+                )
+            })
+            .filter_map(|pod| pod.metadata.name)
+            .collect();
+
+        Ok(names)
+    }
+
     /// Delete a specific pod by name (30s graceful termination).
     pub async fn delete_pod(&self, name: &str) -> Result<()> {
         let dp = DeleteParams {
