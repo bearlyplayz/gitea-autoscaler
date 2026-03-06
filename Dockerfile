@@ -10,9 +10,10 @@ RUN cargo build --release && strip target/release/gitea-autoscaler
 # ── Stage 2: minimal runtime ───────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Reuse the CA trust store from the builder image so the runtime stage does not
+# depend on a separate apt transaction during image builds.
+COPY --from=builder /etc/ssl/certs /etc/ssl/certs
+COPY --from=builder /usr/share/ca-certificates /usr/share/ca-certificates
 
 COPY --from=builder /app/target/release/gitea-autoscaler /usr/local/bin/gitea-autoscaler
 

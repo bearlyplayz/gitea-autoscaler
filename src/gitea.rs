@@ -365,28 +365,3 @@ mod tests {
         assert_eq!(stale_in_progress, 0);
     }
 }
-
-fn summarize_jobs(
-    jobs: &[Job],
-    live_runner_names: &HashSet<String>,
-) -> (u32, HashSet<String>, u32) {
-    let mut queued = 0u32;
-    let mut busy_runners = HashSet::new();
-    let mut stale_in_progress = 0u32;
-
-    for job in jobs {
-        match job.status.as_str() {
-            "queued" => queued += 1,
-            "in_progress" if !job.runner_name.is_empty() => {
-                if live_runner_names.contains(&job.runner_name) {
-                    busy_runners.insert(job.runner_name.clone());
-                } else {
-                    stale_in_progress += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    (queued, busy_runners, stale_in_progress)
-}
