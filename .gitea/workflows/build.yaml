@@ -51,15 +51,23 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.version.outputs.ver }}
 
-      # Commit the updated Cargo.toml and Cargo.lock back to master
-      - name: Push version bump to master
+      # Commit the updated Cargo.toml and Cargo.lock back to main
+      - name: Push version bump to main
         run: |
           VER="${{ steps.version.outputs.ver }}"
           git config user.name  "Gitea Actions"
           git config user.email "actions@bearly.local"
+          if git diff --quiet -- Cargo.toml Cargo.lock; then
+            echo "No changes to commit"
+            exit 0
+          fi
           git add Cargo.toml Cargo.lock
-          git commit -m "chore: bump version to $VER [skip ci]" || echo "No changes to commit"
-          git push origin HEAD:refs/heads/master
+          git commit -m "chore: bump version to $VER [skip ci]"
+          BUMP_COMMIT="$(git rev-parse HEAD)"
+          git fetch origin main
+          git switch -C ci/version-bump origin/main
+          git cherry-pick "$BUMP_COMMIT"
+          git push origin HEAD:refs/heads/main
 
       # Rolling restart so the cluster picks up the new image
       - name: Restart deployment
