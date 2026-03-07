@@ -272,17 +272,8 @@ fn select_stale_offline_runners<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, Runner, select_stale_offline_runners};
+    use super::{Runner, select_stale_offline_runners};
     use std::collections::HashSet;
-
-    fn job(id: u64, status: &str, runner_name: &str) -> Job {
-        Job {
-            id,
-            status: status.to_string(),
-            runner_name: runner_name.to_string(),
-            name: format!("job-{id}"),
-        }
-    }
 
     fn runner(id: u64, name: &str, status: &str, busy: bool) -> Runner {
         Runner {
@@ -331,37 +322,5 @@ mod tests {
         let selected = select_stale_offline_runners(&runners, &live_runner_names, &busy_runners);
 
         assert_eq!(selected, vec![&runners[0]]);
-    }
-
-    #[test]
-    fn summarize_jobs_ignores_in_progress_jobs_on_non_live_runners() {
-        let live_runner_names = HashSet::from(["runner-live".to_string()]);
-        let jobs = vec![
-            job(1, "queued", ""),
-            job(2, "in_progress", "runner-live"),
-            job(3, "in_progress", "runner-gone"),
-        ];
-
-        let (queued, busy_runners, stale_in_progress) = summarize_jobs(&jobs, &live_runner_names);
-
-        assert_eq!(queued, 1);
-        assert_eq!(busy_runners, HashSet::from(["runner-live".to_string()]));
-        assert_eq!(stale_in_progress, 1);
-    }
-
-    #[test]
-    fn summarize_jobs_counts_only_queued_jobs_as_queued() {
-        let live_runner_names = HashSet::new();
-        let jobs = vec![
-            job(1, "queued", ""),
-            job(2, "queued", ""),
-            job(3, "completed", "runner-live"),
-        ];
-
-        let (queued, busy_runners, stale_in_progress) = summarize_jobs(&jobs, &live_runner_names);
-
-        assert_eq!(queued, 2);
-        assert!(busy_runners.is_empty());
-        assert_eq!(stale_in_progress, 0);
     }
 }

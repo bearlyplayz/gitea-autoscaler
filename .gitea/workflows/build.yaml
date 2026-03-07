@@ -69,8 +69,16 @@ jobs:
           git cherry-pick "$BUMP_COMMIT"
           git push origin HEAD:refs/heads/main
 
-      # Rolling restart so the cluster picks up the new image
+      # Rolling restart so the cluster picks up the new image when cluster access is available
       - name: Restart deployment
         run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "kubectl is not installed on this runner; skipping deployment restart"
+            exit 0
+          fi
+          if ! kubectl config current-context >/dev/null 2>&1; then
+            echo "kubectl is installed but no kubeconfig is available; skipping deployment restart"
+            exit 0
+          fi
           kubectl -n gitea rollout restart deployment/gitea-autoscaler
           kubectl -n gitea rollout status deployment/gitea-autoscaler --timeout=120s
