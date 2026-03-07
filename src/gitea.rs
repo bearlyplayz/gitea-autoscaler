@@ -272,7 +272,7 @@ fn select_stale_offline_runners<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, Runner, select_stale_offline_runners, summarize_jobs};
+    use super::{Job, Runner, select_stale_offline_runners};
     use std::collections::HashSet;
 
     fn job(id: u64, status: &str, runner_name: &str) -> Job {
