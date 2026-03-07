@@ -7,7 +7,6 @@ on:
 
 env:
   IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler/autoscaler
-  IMAGE_CACHE: gitea.bearly.local/bearlyprojects/gitea-autoscaler/autoscaler:buildcache
 
 jobs:
   release:
@@ -36,22 +35,21 @@ jobs:
           cargo generate-lockfile
           echo "Cargo.toml version set to $VER"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Login to Gitea Registry
+        uses: docker/login-action@v3
         with:
-          driver: docker-container
+          registry: gitea.bearly.local
+          username: ${{ gitea.actor }}
+          password: ${{ secrets.DEPLOY_REPO_TOKEN }}
 
-      # Build and push both latest and version tags
-      - name: Build and Push
+      - name: Build and push CI image
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.version.outputs.ver }}
-          cache-from: type=registry,ref=${{ env.IMAGE_CACHE }}
-          cache-to: type=registry,ref=${{ env.IMAGE_CACHE }},mode=max
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.short_sha }}
 
       # Commit the updated Cargo.toml and Cargo.lock back to master
       - name: Push version bump to master
