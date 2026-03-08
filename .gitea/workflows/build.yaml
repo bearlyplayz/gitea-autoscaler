@@ -6,7 +6,7 @@ on:
       - "v*"
 
 env:
-  IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler/autoscaler
+  IMAGE: gitea.bearly.local/bearlyprojects/gitea-autoscaler
 
 jobs:
   release:
